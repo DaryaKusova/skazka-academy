@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { headers } from "next/headers";
 import { getChatGPTUser } from "@/app/chatgpt-auth";
-import { claimMembership, DomainError, emptyState, object, scopeWorkspace } from "./model";
+import { claimMembership, DomainError, emptyState, normalizeState, object, scopeWorkspace } from "./model";
 import type { User, WorkspaceState } from "./model";
 import { AuthError, getAdminCredential, getPasswordUser } from "./auth";
 
@@ -52,7 +52,7 @@ export async function loadStored(): Promise<Stored> {
     row = await db.prepare("SELECT revision, document FROM workspaces WHERE id = ?").bind(WORKSPACE_ID).first<Row>();
   }
   if (!row) throw new DomainError("Рабочая область недоступна.", 503);
-  return { revision: row.revision, state: JSON.parse(row.document) as WorkspaceState };
+  return { revision: row.revision, state: normalizeState(JSON.parse(row.document)) };
 }
 export async function compareAndSwap(revision: number, state: WorkspaceState): Promise<boolean> {
   const document = JSON.stringify(state);

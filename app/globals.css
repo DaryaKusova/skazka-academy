@@ -164,4 +164,63 @@ html[data-theme=dark] .journey-landmark-labels{color:#4d6b77}
   .metric-top{font-size:10px}
 }
 
+/* Names, shared event rosters and separate sources of feedback. */
+.person-name-title{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;text-align:left}
+.person-name-title small{font-size:11px;font-weight:400;color:var(--muted);white-space:normal}
+.table-person .person-name-title b{white-space:normal}
+.event-participants{display:flex;align-items:flex-start;gap:6px;color:var(--muted);font-size:11px;line-height:1.6;margin-top:7px;overflow-wrap:anywhere}
+.event-participants svg{flex-shrink:0;margin-top:3px}
+.calendar-participants{display:block;font-size:10px;line-height:1.4;opacity:.85;margin-top:5px;font-weight:400}
+.participants-cell{font-size:11px;line-height:1.6;min-width:180px;max-width:250px;white-space:normal}
+.racer-name .racer-title{margin-top:3px;font-size:10px;line-height:1.4;max-width:150px;overflow-wrap:anywhere}
+.racer-name small:last-child{margin-top:6px}
+.person-ipr-link{margin-top:18px}
+.task-rating{display:block;color:var(--muted);font-size:11px;margin-top:10px}
+.task-rating b{font-size:inherit;color:var(--text)}
+.task-row>div>.text-button{margin-top:6px}
+.rating-field{padding:16px;border:1px solid var(--line);border-radius:14px;margin:4px 0}
+.rating-field legend{font-size:13px;font-weight:650;padding:0 5px}
+.rating-choices{display:flex;gap:10px;margin:4px 0 10px}
+.rating-choices label{flex:1;position:relative;cursor:pointer}
+.rating-choices input{position:absolute;opacity:0;width:1px;height:1px;min-height:0!important}
+.rating-choices span{display:flex;align-items:center;justify-content:center;min-width:40px;min-height:48px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font-size:20px;font-weight:650;transition:background .15s,border-color .15s}
+.rating-choices input:checked+span{background:var(--cyan-soft);border-color:var(--cyan);color:var(--cyan)}
+.rating-choices input:focus-visible+span{outline:3px solid var(--cyan);outline-offset:3px}
+.rating-field .rating-clear{display:flex;align-items:center;gap:10px;min-height:40px;margin-top:4px;flex-direction:row}
+.rating-clear input{width:18px!important;height:18px!important;min-height:18px!important;accent-color:var(--cyan)}
+.rating-readonly{padding:18px;background:var(--bg);border-radius:12px;font-size:13px}
+.peer-callout{display:flex;align-items:flex-start;gap:14px;padding:20px;background:var(--cyan-soft);border-radius:14px}
+.peer-callout>svg{flex-shrink:0;color:var(--cyan)}
+.peer-callout p{font-size:12px;color:var(--muted);line-height:1.6}
+.peer-callout .button{margin-top:8px}
+.peer-reviews{margin-top:20px;border-top:1px solid var(--line);padding-top:18px}
+.peer-reviews h3{font-size:15px;margin:0 0 12px}
+.peer-reviews article{padding:14px 0;border-bottom:1px solid var(--line)}
+.peer-reviews article>div{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px}
+.peer-reviews article p{font-size:13px;line-height:1.6;white-space:pre-wrap}
+.peer-reviews article small{font-size:11px;color:var(--muted)}
+.personal-feedback{padding:24px}
+.personal-feedback .peer-reviews{border-top:0;margin-top:0;padding-top:0}
+.export-options{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:6px 0 16px}
+.export-options button{white-space:normal}
+@media(max-width:900px){
+  .rating-choices{gap:8px}
+  .event-participants{font-size:12px}
+  .calendar-participants{font-size:11px}
+  .person-name-title small{font-size:12px}
+  .filterbar>select[aria-label="Участник календаря"]{max-width:100%;min-height:44px}
+  .attendance-row .person-name-title{flex:1;min-width:120px}
+}
+@media(max-width:540px){
+  .export-options{grid-template-columns:1fr}
+  .rating-field{padding:12px}
+  .rating-choices span{font-size:18px;min-height:46px}
+  .peer-callout{padding:16px;gap:10px}
+  .peer-reviews article>div{align-items:flex-start}
+  .topbar-actions{gap:3px}
+  .breadcrumb{min-width:0}
+  .breadcrumb b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .racer-name .racer-title{max-width:100%;font-size:11px}
+}
+
 

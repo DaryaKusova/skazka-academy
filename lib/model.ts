@@ -13,7 +13,12 @@ export type Skill = { id: string; name: string };
 export type Task = {
   id: string; personId: string; eventId: string | null; title: string; description: string;
   dueDate: string | null; status: "todo" | "submitted" | "done"; evidence: string; completedAt: string | null;
+  rating: number | null; ratingComment: string; ratedAt: string | null; ratedBy: string | null;
 };
+export type DevelopmentPlan = { id: string; personId: string; goal: string; successCriteria: string; support: string; reviewDate: string | null };
+export type PeerReview = { id: string; eventId: string; personId: string; reviewerPersonId: string; score: number; comment: string; updatedAt: string };
+export type PeerReviewView = PeerReview & { personName: string; reviewerName: string; eventTitle: string };
+export type EventRosterEntry = { eventId: string; personId: string; name: string; title: string };
 export type Assessment = {
   id: string; personId: string; skillId: string; baseline: number | null; current: number | null;
   target: number | null; evidence: string; date: string | null;
@@ -21,13 +26,14 @@ export type Assessment = {
 export type Attendance = { id: string; eventId: string; personId: string; status: "pending" | "confirmed" | "absent"; note: string };
 export type Settings = { eventPoints: number; taskPoints: number; skillPointWeight: number; finishPoints: number };
 export type AuditEntry = { id: string; at: string; actorId: string; actorName: string; action: string; entityId: string };
-export type RaceEntry = { name: string; color: string; points: number; progress: number };
+export type RaceEntry = { name: string; title: string; color: string; points: number; progress: number };
 export type WorkspaceState = {
   ownerId: string | null; people: Person[]; events: LearningEvent[]; tasks: Task[]; skills: Skill[];
   assessments: Assessment[]; attendance: Attendance[]; settings: Settings; audit: AuditEntry[];
+  developmentPlans: DevelopmentPlan[]; peerReviews: PeerReview[];
 };
-export type Workspace = Omit<WorkspaceState, "ownerId"> & { user: User; role: Role; revision: number; race: RaceEntry[] };
-export type Action = "saveEvent" | "archiveEvent" | "savePerson" | "unlinkAccount" | "saveTask" | "completeTask" | "setAttendance" | "saveAssessment" | "saveSettings";
+export type Workspace = Omit<WorkspaceState, "ownerId" | "peerReviews"> & { user: User; role: Role; revision: number; race: RaceEntry[]; eventRoster: EventRosterEntry[]; peerReviews: PeerReviewView[] };
+export type Action = "saveEvent" | "archiveEvent" | "savePerson" | "unlinkAccount" | "saveTask" | "completeTask" | "setAttendance" | "saveAssessment" | "saveSettings" | "saveDevelopmentPlan" | "savePeerReview";
 export const DEFAULT_SETTINGS: Settings = { eventPoints: 20, taskPoints: 30, skillPointWeight: 50, finishPoints: 1000 };
 export const PERSON_COLORS = ["#008d95", "#9a70c4", "#e3a22f", "#3b89bf", "#e48679", "#70a671", "#bd73a5", "#577d9b", "#a28c61", "#4d9f8e", "#9e7eae"];
 
@@ -36,7 +42,17 @@ export class DomainError extends Error {
   constructor(message: string, status = 400) { super(message); this.name = "DomainError"; this.status = status; }
 }
 export function emptyState(): WorkspaceState {
-  return { ownerId: null, people: [], events: [], tasks: [], skills: [], assessments: [], attendance: [], settings: { ...DEFAULT_SETTINGS }, audit: [] };
+  return { ownerId: null, people: [], events: [], tasks: [], skills: [], assessments: [], attendance: [], settings: { ...DEFAULT_SETTINGS }, audit: [], developmentPlans: [], peerReviews: [] };
+}
+/** Additive, read-time compatibility: existing facts, scores and account links remain intact. */
+export function normalizeState(raw: unknown): WorkspaceState {
+  const state = object(raw) as unknown as WorkspaceState;
+  return {
+    ...emptyState(), ...state,
+    settings: { ...DEFAULT_SETTINGS, ...state.settings },
+    tasks: (state.tasks ?? []).map((task) => ({ ...task, rating: task.rating ?? null, ratingComment: task.ratingComment ?? "", ratedAt: task.ratedAt ?? null, ratedBy: task.ratedBy ?? null })),
+    developmentPlans: state.developmentPlans ?? [], peerReviews: state.peerReviews ?? [],
+  };
 }
 export function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new DomainError("Ожидается JSON-объект.");
@@ -77,6 +93,14 @@ function numeric(value: unknown, field: string, min: number, max: number): numbe
 function nullableScore(value: unknown): number | null {
   return value === undefined || value === null || value === "" ? null : numeric(value, "оценка", 0, 5);
 }
+function ratingScore(value: unknown): number {
+  const result = numeric(value, "оценка", 1, 5);
+  if (!Number.isInteger(result)) throw new DomainError("Оценка должна быть целым числом от 1 до 5.");
+  return result;
+}
+function nullableRating(value: unknown): number | null {
+  return value === undefined || value === null || value === "" ? null : ratingScore(value);
+}
 function date(value: unknown): string | null {
   if (value === undefined || value === null || value === "") return null;
   const result = required(value, "дата", 10);
@@ -107,34 +131,50 @@ export function calculateRace(state: WorkspaceState): RaceEntry[] {
     const points = Math.round((attendance.size * state.settings.eventPoints + tasks.size * state.settings.taskPoints + gain * state.settings.skillPointWeight) * 100) / 100;
     // Also guards an old or externally corrupted zero denominator.
     const progress = state.settings.finishPoints > 0 ? Math.min(100, Math.max(0, Math.round(points / state.settings.finishPoints * 1000) / 10)) : 0;
-    return { name: person.name, color: person.color, points, progress };
+    return { name: person.name, title: person.title, color: person.color, points, progress };
   }).sort((left, right) => right.points - left.points || left.name.localeCompare(right.name, "ru"));
 }
 export function scopeWorkspace(state: WorkspaceState, revision: number, user: User): Workspace {
   const role = resolveRole(state, user);
   const { ownerId: _ownerId, ...data } = state;
   void _ownerId;
-  if (role === "pending") return { user, role, revision, people: [], events: [], tasks: [], skills: [], assessments: [], attendance: [], audit: [], settings: { ...DEFAULT_SETTINGS }, race: [] };
+  if (role === "pending") return { user, role, revision, people: [], events: [], tasks: [], skills: [], assessments: [], attendance: [], audit: [], settings: { ...DEFAULT_SETTINGS }, race: [], developmentPlans: [], peerReviews: [], eventRoster: [] };
   const race = calculateRace(state);
-  if (role === "admin") return { ...data, user, role, revision, race };
   const ownIds = new Set(state.people.filter((person) => person.active && person.userId === user.id).map((person) => person.id));
+  const visibleEvents = state.events.filter((event) => !event.archived && (role === "admin" || event.participantIds.some((id) => ownIds.has(id))));
+  const eventRoster = visibleEvents.filter((event) => event.type === "group" || event.type === "team").flatMap((event) => event.participantIds.flatMap((personId) => {
+    const person = state.people.find((item) => item.id === personId);
+    return person ? [{ eventId: event.id, personId, name: person.name, title: person.title }] : [];
+  }));
+  // Only reviews already visible to this user gain display names. Historical
+  // feedback stays identifiable without exposing former participants' profiles.
+  const peerReviews = state.peerReviews.filter((review) => role === "admin" || ownIds.has(review.personId) || ownIds.has(review.reviewerPersonId))
+    .map(({ id, eventId, personId, reviewerPersonId, score, comment, updatedAt }) => ({
+      id, eventId, personId, reviewerPersonId, score, comment, updatedAt,
+      personName: state.people.find((person) => person.id === personId)?.name ?? "Участник",
+      reviewerName: state.people.find((person) => person.id === reviewerPersonId)?.name ?? "Участник",
+      eventTitle: state.events.find((event) => event.id === eventId)?.title ?? "Мероприятие",
+    }));
+  if (role === "admin") return { ...data, user, role, revision, race, eventRoster, peerReviews };
   return {
-    user, role, revision, race, audit: [],
+    user, role, revision, race, audit: [], eventRoster,
     settings: { eventPoints: state.settings.eventPoints, taskPoints: state.settings.taskPoints, skillPointWeight: state.settings.skillPointWeight, finishPoints: state.settings.finishPoints },
     skills: state.skills.map(({ id, name }) => ({ id, name })),
     people: state.people.filter((person) => ownIds.has(person.id)).map(({ id, name, email, userId, title, color, active }) => ({ id, name, email, userId, title, color, active })),
     // Explicit projections prevent future storage fields, raw workbook metadata and
     // editorial notes from silently becoming visible in a participant response.
-    events: state.events.filter((event) => !event.archived && event.participantIds.some((id) => ownIds.has(id))).map((event) => ({
+    events: visibleEvents.map((event) => ({
       id: event.id, date: event.date, week: event.week, type: event.type, title: event.title, skill: event.skill,
       description: event.description, format: event.format, expectedResult: event.expectedResult,
-      participantIds: event.participantIds.filter((id) => ownIds.has(id)), stage: event.stage, owner: event.owner,
+      participantIds: event.type === "group" || event.type === "team" ? [...event.participantIds] : event.participantIds.filter((id) => ownIds.has(id)), stage: event.stage, owner: event.owner,
       planLink: event.planLink, status: event.status, archived: false, sourceSheet: "", sourceRow: null,
       originalStatus: "", comment: "",
     })),
-    tasks: state.tasks.filter((task) => ownIds.has(task.personId)).map(({ id, personId, eventId, title, description, dueDate, status, evidence, completedAt }) => ({ id, personId, eventId, title, description, dueDate, status, evidence, completedAt })),
+    tasks: state.tasks.filter((task) => ownIds.has(task.personId)).map(({ id, personId, eventId, title, description, dueDate, status, evidence, completedAt, rating, ratingComment, ratedAt }) => ({ id, personId, eventId, title, description, dueDate, status, evidence, completedAt, rating, ratingComment, ratedAt, ratedBy: null })),
     assessments: state.assessments.filter((entry) => ownIds.has(entry.personId)).map(({ id, personId, skillId, baseline, current, target, evidence, date }) => ({ id, personId, skillId, baseline, current, target, evidence, date })),
     attendance: state.attendance.filter((entry) => ownIds.has(entry.personId)).map(({ id, eventId, personId, status, note }) => ({ id, eventId, personId, status, note })),
+    developmentPlans: state.developmentPlans.filter((plan) => ownIds.has(plan.personId)).map(({ id, personId, goal, successCriteria, support, reviewDate }) => ({ id, personId, goal, successCriteria, support, reviewDate })),
+    peerReviews,
   };
 }
 function upsert<T extends { id: string }>(values: T[], item: T): T[] {
@@ -177,7 +217,8 @@ function parseTask(raw: unknown, state: WorkspaceState, existing?: Task): Task {
   if (existing && existing.status !== "todo" && existing.personId !== personId) throw new DomainError("Сначала верните задачу в работу, чтобы изменить исполнителя.");
   const eventId = value.eventId ? identifier(value.eventId, "мероприятие") : null;
   if (eventId && !eventExists(state, eventId).participantIds.includes(personId)) throw new DomainError("Задачу можно связать только с мероприятием участника.");
-  return { id: makeId(value.id), personId, eventId, title: required(value.title, "задача", 600), description: text(value.description, "описание"), dueDate: date(value.dueDate), status: existing?.status ?? "todo", evidence: existing?.evidence ?? "", completedAt: existing?.completedAt ?? null };
+  const sameAssignee = existing?.personId === personId;
+  return { id: makeId(value.id), personId, eventId, title: required(value.title, "задача", 600), description: text(value.description, "описание"), dueDate: date(value.dueDate), status: existing?.status ?? "todo", evidence: sameAssignee ? existing.evidence : "", completedAt: existing?.completedAt ?? null, rating: sameAssignee ? existing.rating ?? null : null, ratingComment: sameAssignee ? existing.ratingComment ?? "" : "", ratedAt: sameAssignee ? existing.ratedAt ?? null : null, ratedBy: sameAssignee ? existing.ratedBy ?? null : null };
 }
 function validateUniqueMembership(people: Person[]): void {
   const emails = people.map((person) => person.email).filter(Boolean);
@@ -190,7 +231,7 @@ function appendAudit(state: WorkspaceState, user: User, action: string, entityId
 }
 export function applyAction(state: WorkspaceState, user: User, action: string, raw: unknown, now = new Date().toISOString()): WorkspaceState {
   const role = resolveRole(state, user);
-  if (role === "pending" || (role !== "admin" && action !== "completeTask")) throw new DomainError("Недостаточно прав для изменения этих данных.", 403);
+  if (role === "pending" || (role !== "admin" && action !== "completeTask" && action !== "savePeerReview")) throw new DomainError("Недостаточно прав для изменения этих данных.", 403);
   const value = object(raw);
   const next = { ...state }; let entityId = "";
   switch (action) {
@@ -224,8 +265,28 @@ export function applyAction(state: WorkspaceState, user: User, action: string, r
       if (!task) throw new DomainError("Задача не найдена.", 404);
       const status = enumeration(value.status, ["todo", "submitted", "done"], role === "admin" ? "done" : "submitted");
       if (role !== "admin" && (status !== "submitted" || task.status === "done")) throw new DomainError("Руководитель может только отправить свою незавершённую задачу на подтверждение.", 403);
+      if (role !== "admin" && ["rating", "ratingComment", "ratedAt", "ratedBy"].some((key) => Object.hasOwn(value, key))) throw new DomainError("Оценку практической задачи выставляет только L&D.", 403);
       const evidence = text(value.evidence, "подтверждение", 10000, task.evidence);
-      next.tasks = upsert(state.tasks, { ...task, status, evidence, completedAt: status === "done" ? task.completedAt ?? now : null }); break;
+      const reviewChanged = role === "admin" && (Object.hasOwn(value, "rating") || Object.hasOwn(value, "ratingComment"));
+      const rating = reviewChanged && Object.hasOwn(value, "rating") ? nullableRating(value.rating) : task.rating ?? null;
+      const ratingComment = reviewChanged ? text(value.ratingComment, "комментарий L&D", 10000, task.ratingComment ?? "") : task.ratingComment ?? "";
+      next.tasks = upsert(state.tasks, { ...task, status, evidence, completedAt: status === "done" ? task.completedAt ?? now : null, rating, ratingComment, ratedAt: reviewChanged ? rating === null ? null : now : task.ratedAt ?? null, ratedBy: reviewChanged ? rating === null ? null : user.id : task.ratedBy ?? null }); break;
+    }
+    case "saveDevelopmentPlan": {
+      const personId = identifier(value.personId, "участник"); personExists(state, personId);
+      entityId = `plan-${personId}`;
+      const plan: DevelopmentPlan = { id: entityId, personId, goal: required(value.goal, "цель развития", 10000), successCriteria: text(value.successCriteria, "критерии успеха"), support: text(value.support, "необходимая поддержка"), reviewDate: date(value.reviewDate) };
+      next.developmentPlans = upsert(state.developmentPlans, plan); break;
+    }
+    case "savePeerReview": {
+      const reviewer = state.people.find((person) => person.active && person.userId === user.id);
+      if (!reviewer) throw new DomainError("Оценку коллеги может оставить только участник мероприятия от своего имени.", 403);
+      if (value.reviewerPersonId !== undefined && value.reviewerPersonId !== reviewer.id) throw new DomainError("Нельзя выставлять оценку от имени другого участника.", 403);
+      const eventId = identifier(value.eventId, "мероприятие"), personId = identifier(value.personId, "участник");
+      const event = state.events.find((item) => item.id === eventId && !item.archived && (item.type === "group" || item.type === "team") && item.participantIds.includes(reviewer.id) && item.participantIds.includes(personId));
+      if (!event || personId === reviewer.id || !state.people.some((person) => person.id === personId && person.active)) throw new DomainError("Можно оценить другого активного участника своего общего мероприятия.", 403);
+      entityId = `${eventId}::${personId}::${reviewer.id}`;
+      next.peerReviews = upsert(state.peerReviews, { id: entityId, eventId, personId, reviewerPersonId: reviewer.id, score: ratingScore(value.score), comment: text(value.comment, "обратная связь"), updatedAt: now }); break;
     }
     case "setAttendance": {
       const eventId = identifier(value.eventId, "мероприятие"), personId = identifier(value.personId, "участник");
@@ -248,7 +309,7 @@ export function applyAction(state: WorkspaceState, user: User, action: string, r
     }
     default: throw new DomainError("Неизвестное действие.");
   }
-  if (next.people.length > 500 || next.events.length > 5000 || next.tasks.length > 10000) throw new DomainError("Достигнут лимит рабочей области.", 413);
+  if (next.people.length > 500 || next.events.length > 5000 || next.tasks.length > 10000 || next.developmentPlans.length > 500 || next.peerReviews.length > 20000) throw new DomainError("Достигнут лимит рабочей области.", 413);
   return appendAudit(next, user, action, entityId, now);
 }
 export type ImportData = { people: unknown[]; events: unknown[]; skills: unknown[]; tasks?: unknown[] };
@@ -262,7 +323,8 @@ export function mergeImport(state: WorkspaceState, raw: unknown): WorkspaceState
   }
   for (const rawPerson of people) {
     const person = object(rawPerson), existing = existingById(next.people, person.id);
-    const parsed = parsePerson({ ...existing, ...person, email: person.email || existing?.email || null }, next.people.length, existing);
+    const importedTitle = text(person.title, "должность", 300);
+    const parsed = parsePerson({ ...existing, ...person, title: importedTitle || existing?.title || "", active: existing?.active ?? person.active, email: person.email || existing?.email || null }, next.people.length, existing);
     next.people = upsert(next.people, parsed);
   }
   validateUniqueMembership(next.people);
@@ -311,7 +373,10 @@ export function restoreBootstrapState(raw: unknown): WorkspaceState {
     const status = enumeration(task.status, ["todo", "submitted", "done"]);
     const completedAt = task.completedAt === null || task.completedAt === undefined ? null : timestamp(task.completedAt, "дата выполнения");
     if ((status === "done") !== (completedAt !== null)) throw new DomainError("Статус задачи не соответствует сохранённой дате выполнения.");
-    return { ...parsed, eventId, status, evidence: text(task.evidence, "подтверждение"), completedAt };
+    const rating = nullableRating(task.rating), ratedAt = task.ratedAt === undefined || task.ratedAt === null ? null : timestamp(task.ratedAt, "дата оценки задачи");
+    const ratedBy = task.ratedBy === undefined || task.ratedBy === null ? null : required(task.ratedBy, "автор оценки задачи", 300);
+    if (rating !== null && (!ratedAt || !ratedBy)) throw new DomainError("У сохранённой оценки задачи отсутствуют дата или автор.");
+    return { ...parsed, eventId, status, evidence: text(task.evidence, "подтверждение"), completedAt, rating, ratingComment: text(task.ratingComment, "комментарий L&D"), ratedAt, ratedBy };
   }), "задачи");
   state.attendance = unique(list(value.attendance, "участие", 100000).map((rawEntry) => {
     const entry = object(rawEntry), eventId = identifier(entry.eventId, "мероприятие"), personId = identifier(entry.personId, "участник");
@@ -326,6 +391,16 @@ export function restoreBootstrapState(raw: unknown): WorkspaceState {
     if (assessment.current !== null && (!assessment.date || !assessment.evidence)) throw new DomainError("У сохранённой оценки отсутствуют дата или основание.");
     return assessment;
   }), "оценки");
+  state.developmentPlans = unique(list(value.developmentPlans ?? [], "ИПР", 500).map((rawEntry) => {
+    const entry = object(rawEntry), personId = identifier(entry.personId, "участник"); personExists(state, personId);
+    return { id: `plan-${personId}`, personId, goal: required(entry.goal, "цель развития", 10000), successCriteria: text(entry.successCriteria, "критерии успеха"), support: text(entry.support, "поддержка"), reviewDate: date(entry.reviewDate) };
+  }), "ИПР");
+  state.peerReviews = unique(list(value.peerReviews ?? [], "оценки коллег", 20000).map((rawEntry) => {
+    const entry = object(rawEntry), eventId = identifier(entry.eventId, "мероприятие"), personId = identifier(entry.personId, "участник"), reviewerPersonId = identifier(entry.reviewerPersonId, "автор отзыва");
+    eventExists(state, eventId); personExists(state, personId); personExists(state, reviewerPersonId);
+    if (personId === reviewerPersonId) throw new DomainError("Участник не может оценивать самого себя.");
+    return { id: `${eventId}::${personId}::${reviewerPersonId}`, eventId, personId, reviewerPersonId, score: ratingScore(entry.score), comment: text(entry.comment, "обратная связь"), updatedAt: timestamp(entry.updatedAt, "дата отзыва") };
+  }), "оценки коллег");
   const settings = object(value.settings);
   state.settings = { eventPoints: numeric(settings.eventPoints, "баллы за мероприятие", 0, 10000), taskPoints: numeric(settings.taskPoints, "баллы за задачу", 0, 10000), skillPointWeight: numeric(settings.skillPointWeight, "баллы за рост навыка", 0, 10000), finishPoints: numeric(settings.finishPoints, "финиш", 1, 10000000) };
   state.audit = unique(list(value.audit ?? [], "история", 100).map((rawEntry) => {
