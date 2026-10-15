@@ -61,4 +61,107 @@ html[data-theme=dark] .journey-landmark-labels{color:#4d6b77}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}}
 .login-form{width:100%;max-width:350px;display:grid;gap:16px;margin-top:3px}.login-form>label{display:grid;gap:7px;font-size:12px;font-weight:500;color:#294655}.login-input{display:flex;align-items:center;gap:10px;padding:0 13px;background:#ffffffdc;border:1px solid #bcd0d9;border-radius:9px;color:#5d7f91;min-height:46px;box-shadow:0 3px 16px #36596b07}.login-input input{width:100%;min-width:0;background:none;border:0;outline:none;padding:12px 0;color:#203b4b;font:inherit;font-size:14px;box-shadow:none}.login-input:focus-within{outline:2px solid #26b8df;outline-offset:2px}.login-input input:focus-visible{outline:none}.login-input button{display:flex;align-items:center;justify-content:center;min-width:30px;min-height:36px;color:#5d7f91}.login-form .button{margin-top:5px;width:100%;min-height:45px}.login-error{font-size:12px;line-height:1.5;color:#b62251;background:#fff4f5;border-radius:7px;padding:10px 12px}.signin-card .brand-logo{margin-bottom:30px}.signin-card>p{margin-bottom:23px}.signin-card{max-width:530px}.signin-card h1{font-size:clamp(32px,3.5vw,46px)}@media(max-width:760px){.login-form{max-width:340px}.login-input input{font-size:16px}.signin-screen{padding-top:35px;padding-bottom:35px}.signin-card .brand-logo{margin-bottom:25px}.signin-card h1{font-size:32px}}
 
+/* Touch layouts keep the desktop composition and provide larger controls. */
+@media(max-width:900px){
+  .sidebar{width:min(280px,calc(100vw - 56px));height:100dvh;bottom:auto;overflow-y:auto;overscroll-behavior:contain;transform:translateX(-100%);visibility:hidden;transition:transform .25s ease,visibility .25s;padding:24px 18px max(10px,env(safe-area-inset-bottom));z-index:60}
+  .sidebar.is-open{transform:translateX(0);visibility:visible}
+  .nav-backdrop{position:fixed;inset:0;background:#10253570;z-index:50;backdrop-filter:blur(3px);touch-action:none}
+  body:has(.sidebar.is-open),body:has(dialog[open]){overflow:hidden}
+  .main-shell{margin-left:0;min-width:0}
+  .mobile-menu{display:inline-flex;margin-left:-7px}
+  .topbar{height:64px;padding:0 18px;position:sticky;top:0;z-index:20}
+  .breadcrumb{gap:7px;min-width:0}
+  .breadcrumb>span,.breadcrumb>svg{display:none}
+  .topbar-actions{gap:7px}
+  .private-badge{display:none}
+  .main-content{max-width:100%;padding-bottom:env(safe-area-inset-bottom)}
+  .nav-item,.theme-toggle{min-height:46px}
+  .sidebar-bottom{padding-top:22px;flex-shrink:0}
+  .profile>a,.profile>button{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px}
+  .button,.small-button,.page-heading>.button,.hero-copy .button,.form-actions .button,.task-row>.button,.month-controls>.button{min-height:44px}
+  .icon-button,.month-controls>.icon-button,.task-row>.icon-button,.person-identity>.icon-button,.skill-card .icon-button,.modal-heading .icon-button{height:44px;width:44px;min-width:44px;min-height:44px}
+  .text-button,.section-heading .text-button,.chip,.segmented button{min-height:44px;min-width:44px;font-size:12px;line-height:1.4}
+  .text-button,.section-heading .text-button{white-space:normal;text-align:left;padding:8px 0}
+  .section-heading>.text-button{max-width:45%;flex-shrink:0}
+  .chip{padding:9px 12px}
+  .segmented button{padding:9px 14px}
+  .table-title,.table-person,.personal-event>button{min-height:44px}
+  .table-title{padding:7px 0}
+  .calendar-event{min-height:44px;padding:8px 7px;font-size:10px}
+  .calendar-event>span:last-child{-webkit-line-clamp:3}
+  .person-option{min-height:64px}
+  .table-scroll,.calendar-scroll,.person-selector{max-width:100%;min-width:0;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-color:#bdd0d9 transparent}
+  .table-scroll{border-radius:0 0 12px 12px}
+  .table-scroll th,.table-scroll td{font-size:12px}
+  .table-person,.table-title{font-size:12px}
+  .search{min-height:46px;height:auto;min-width:0}
+  .search input{padding:11px 0;line-height:1.45}
+  .search input,.filterbar>select,.attendance-row select,.login-input input,.edit-form input:not([type=checkbox]),.edit-form select,.edit-form textarea{font-size:16px;line-height:1.45}
+  .filterbar>select,.attendance-row select,.edit-form input:not([type=checkbox]),.edit-form select{min-height:46px}
+  .login-input{min-height:48px;padding-right:5px}
+  .login-input button{min-width:44px;min-height:44px}
+  .edit-form input[type=color]{min-width:60px}
+  .edit-form .checkbox{min-height:44px;padding:8px 0;font-size:13px}
+  .checkbox input{height:20px;width:20px}
+  .checkbox-grid{gap:4px 12px}
+  .modal{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));margin:auto;scroll-padding-top:80px;scroll-padding-bottom:30px;overscroll-behavior:contain}
+  .modal-heading{padding-top:12px;padding-bottom:12px;min-height:68px}
+  .edit-form label{scroll-margin-top:85px;scroll-margin-bottom:25px}
+  .edit-form,.event-detail{overflow-wrap:anywhere}
+  .edit-form textarea{min-height:110px}
+  .form-actions{gap:10px;padding-bottom:max(4px,env(safe-area-inset-bottom))}
+  .form-actions>.button{flex:1;white-space:normal}
+  .toast{left:50%;bottom:max(16px,env(safe-area-inset-bottom));max-width:calc(100vw - 28px);font-size:12px}
+  .button:hover,.metric-link:hover,.action-tile:hover{transform:none}
+}
+@media(min-width:541px) and (max-width:900px){
+  .main-content{padding-left:24px;padding-right:24px}
+  .page-heading{flex-wrap:wrap;align-items:center}
+  .page-heading>div{flex:1;min-width:260px}
+  .calendar-toolbar{gap:12px}
+}
+@media(max-width:540px){
+  .topbar{padding:0 16px}
+  .page-heading>.button,.hero-copy .button{font-size:12px}
+  .hero{min-height:354px}
+  .hero-caption{bottom:9px}
+  .section-heading{flex-wrap:wrap;align-items:center}
+  .section-heading>div{flex:1;min-width:150px}
+  .section-heading>.text-button{max-width:100%;font-size:11px}
+  .section-heading .text-button svg{width:15px;height:15px}
+  .calendar-toolbar{padding-left:12px;padding-right:12px}
+  .month-controls{gap:0;flex-wrap:wrap}
+  .month-controls h2{font-size:16px;min-width:130px}
+  .month-controls>.button{margin-left:4px;font-size:11px}
+  .chips{gap:6px;width:100%}
+  .chip{font-size:11px;padding:9px 10px}
+  .segmented button{font-size:12px}
+  .filterbar>.search{width:100%;max-width:none}
+  .filterbar>select{width:100%}
+  .filterbar>.muted{margin-left:0}
+  .person-identity>.icon-button{margin-top:-7px;margin-right:-7px}
+  .person-identity h2{font-size:19px}
+  .skill-card>div:first-child{gap:4px}
+  .skill-card b{font-size:13px}
+  .task-row>.button{font-size:12px;padding:10px 12px}
+  .task-row b,.personal-event b{font-size:12px}
+  .personal-event .badge{margin-top:3px}
+  .event-row-copy h3{font-size:12px}
+  .edit-form label{font-size:12px}
+  .edit-form,.event-detail{padding-left:16px;padding-right:16px}
+  .form-actions .button{font-size:12px;padding:11px 12px}
+  .attendance-row select{margin-left:0;max-width:100%;width:100%}
+  .modal-heading{padding-left:16px;padding-right:12px}
+  .login-form{max-width:100%}
+  .signin-screen{min-height:100dvh;padding:24px max(22px,env(safe-area-inset-left)) max(28px,env(safe-area-inset-bottom))}
+}
+@media(max-width:380px){
+  .main-content{padding-left:12px;padding-right:12px}
+  .hero-copy{padding-left:21px;padding-right:18px}
+  .hero-copy h2{font-size:31px}
+  .month-controls h2{font-size:15px;min-width:115px}
+  .month-controls>.button{padding-left:9px;padding-right:9px}
+  .metric-top{font-size:10px}
+}
+
 

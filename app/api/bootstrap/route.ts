@@ -1,4 +1,4 @@
-import { DomainError, mergeImport, recordImport, restoreBootstrapState } from "@/lib/model";
+import { calculateRace, DomainError, mergeImport, recordImport, restoreBootstrapState } from "@/lib/model";
 import { transferAdminCredential } from "@/lib/auth";
 import { compareAndSwap, database, fail, json, loadStored, readJson, requireBootstrapToken } from "@/lib/server";
 
@@ -19,6 +19,6 @@ export async function POST(request: Request) {
     // the first administrator in the same atomic transaction as the initial programme.
     if (body.adminCredential !== undefined) await transferAdminCredential(database(), stored, body.adminCredential, next);
     else if (!await compareAndSwap(stored.revision, next)) throw new DomainError("Данные уже изменены. Проверьте результат импорта.", 409);
-    return json({ ok: true, revision: stored.revision + 1, imported: { people: next.people.length, events: next.events.length, skills: next.skills.length, tasks: next.tasks.length } });
+    return json({ ok: true, revision: stored.revision + 1, imported: { people: next.people.length, events: next.events.length, skills: next.skills.length, tasks: next.tasks.length, assessments: next.assessments.length, attendance: next.attendance.length, totalXP: calculateRace(next).reduce((total, entry) => total + entry.points, 0) } });
   } catch (error) { return fail(error); }
 }
