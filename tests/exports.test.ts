@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { inflateRawSync } from "node:zlib";
 
 const { prepareExportData, exportSheets, buildXlsx, buildDocx } = await import(new URL("../lib/exports.ts", import.meta.url).href) as typeof import("../lib/exports");
-const { exportFixture } = await import(new URL("./fixtures/export-workspace.ts", import.meta.url).href) as typeof import("./fixtures/export-workspace");
+const { exportFixture, detailedExportFixture } = await import(new URL("./fixtures/export-workspace.ts", import.meta.url).href) as typeof import("./fixtures/export-workspace");
+const { PLAN_SECTIONS, emptyPlanDetails } = await import(new URL("../lib/development-plan.ts", import.meta.url).href) as typeof import("../lib/development-plan");
 const generatedAt = "2026-10-30T12:00:00Z";
 
 // Read ZIP central-directory offsets so data-descriptor and deflated entries both work.
@@ -134,4 +135,82 @@ test("DOCX contains readable personal IPR, outcomes and repeating table headers,
   assert.ok(xml.includes("w:tblLayout w:type=\"fixed\""));
   const allXml = [...entries.values()].join("\n");
   for (const forbidden of ["PRIVATE_ADMIN", "PRIVATE_USER", "PRIVATE_AUDIT", "PRIVATE_B_SKILL_EVIDENCE", "Личная цель Беты", "PRIVATE_RATER"]) assert.equal(allXml.includes(forbidden), false, forbidden);
+});
+
+test("detailed IPR export projects all six sections, period and sources without other people's plans", () => {
+  const workspace = detailedExportFixture();
+  workspace.role = "manager";
+  workspace.user.id = "PRIVATE_USER_A";
+  Object.assign(workspace.developmentPlans[0].details!, { futureSecret: "UNEXPECTED_DETAIL_SECRET" });
+  const data = prepareExportData(workspace, {}, generatedAt);
+  const details = data.people[0].details!;
+  assert.equal(details.periodStart, "2026-11-01");
+  assert.equal(details.periodEnd, "2027-04-30");
+  assert.equal(details.sourceNote, workspace.developmentPlans[0].details!.sourceNote);
+  for (const { key } of PLAN_SECTIONS) assert.deepEqual(details.sections[key], workspace.developmentPlans[0].details!.sections[key]);
+  const json = JSON.stringify(data);
+  for (const forbidden of ["PRIVATE_B_PLAN_SOURCE", "PRIVATE_B_PLAN_DETAILS", "PRIVATE_B_DIAGNOSTIC", "UNEXPECTED_DETAIL_SECRET"]) assert.equal(json.includes(forbidden), false, forbidden);
+  details.sections.priorities[0].cells[0] = "Измененная копия";
+  assert.notEqual(workspace.developmentPlans[0].details!.sections.priorities[0].cells[0], "Измененная копия", "export projection does not mutate live plan data");
+});
+
+test("detailed IPR sheets preserve full columns and separate diagnostic 0–10 scores", () => {
+  const data = prepareExportData(detailedExportFixture(), { personId: "p1" }, generatedAt);
+  const sheets = exportSheets(data);
+  assert.equal(sheets.length, 14);
+  const plan = sheets.find((sheet) => sheet.name === "ИПР")!;
+  assert.equal((plan.rows[0][6] as Date).toISOString().slice(0, 10), "2026-11-01");
+  assert.equal(plan.rows[0][8], data.people[0].details!.sourceNote);
+  assert.equal(plan.rows[0][9], "Учебная анкета самооценки");
+  assert.equal(plan.rows[0][10], "Учебная внешняя оценка");
+  for (const section of PLAN_SECTIONS) {
+    const sheet = sheets.find((item) => item.title === section.title)!;
+    assert.ok(sheet);
+    assert.deepEqual(sheet.columns.slice(2).map(([header]) => header), [...section.columns]);
+    assert.deepEqual(sheet.rows.map((row) => row.slice(2)), data.people[0].details!.sections[section.key].map((row) => row.cells));
+  }
+  const diagnostics = sheets.find((sheet) => sheet.name === "ИПР Диагностика")!;
+  assert.equal(diagnostics.rows[0][3], 7);
+  assert.equal(diagnostics.rows[0][4], null);
+  assert.equal(diagnostics.rows[1][3], 0);
+  assert.equal(diagnostics.rows[1][4], 9);
+  assert.ok(diagnostics.columns[3][0].includes("0–10"));
+  assert.ok(sheets.find((sheet) => sheet.name === "Навыки")!.columns[2][0].includes("0–5"));
+  assert.ok(sheets.find((sheet) => sheet.name === "Практические задачи")!.columns[8][0].includes("1–5"));
+});
+
+test("empty detailed IPR retains reusable section headers and blank diagnostic scores", () => {
+  const workspace = exportFixture();
+  workspace.developmentPlans[0].details = emptyPlanDetails();
+  const sheets = exportSheets(prepareExportData(workspace, { personId: "p1" }, generatedAt));
+  assert.equal(sheets.length, 14);
+  const diagnostics = sheets.find((sheet) => sheet.name === "ИПР Диагностика")!;
+  assert.deepEqual(diagnostics.rows[0].slice(2), ["", null, null, "", ""]);
+  for (const section of PLAN_SECTIONS) assert.deepEqual(sheets.find((sheet) => sheet.title === section.title)!.rows[0].slice(2), ["", "", "", "", ""]);
+});
+
+test("detailed XLSX stores all plan text and literal formula prefixes without altering null or zero diagnostics", async () => {
+  const data = prepareExportData(detailedExportFixture(), { personId: "p1" }, generatedAt);
+  const entries = zipEntries(await buildXlsx(data));
+  assert.equal((entries.get("xl/workbook.xml")!.match(/<sheet /g) ?? []).length, 14);
+  const strings = entries.get("xl/sharedStrings.xml")!;
+  for (const expected of ["=SUM(1,2)", "+Текст", "-Текст", "@Текст", "Конец подробного описания", "Учебная анкета самооценки", "Учебная внешняя оценка"]) assert.ok(strings.includes(expected), expected);
+  for (const [path, xml] of entries) if (/xl\/worksheets\//.test(path)) assert.equal(/<f[ >]/.test(xml), false, path);
+  const diagnosticXml = entries.get("xl/worksheets/sheet8.xml")!;
+  assert.ok(/<c r="D6"[^>]*><v>0<\/v><\/c>/.test(diagnosticXml));
+  assert.equal(/<c r="E5"[^>]*><v>0<\/v><\/c>/.test(diagnosticXml), false);
+  assert.equal(strings.includes("PRIVATE_B_PLAN_DETAILS"), false);
+});
+
+test("detailed DOCX includes complete IPR sources, diagnostics and every five-column section", async () => {
+  const data = prepareExportData(detailedExportFixture(), { personId: "p1" }, generatedAt);
+  const entries = zipEntries(await buildDocx(data));
+  const xml = entries.get("word/document.xml")!;
+  for (const expected of ["01.11.2026", "30.04.2027", "Анонимный учебный пример ИПР", "Дополнительное основание", "Учебная анкета самооценки", "Учебная внешняя оценка", "Диагностика компетенций ИПР", "Самооценка 0–10", "Внешняя оценка 0–10", "Конец подробного описания", "Исходное значение ноль"]) assert.ok(xml.includes(expected), expected);
+  for (const section of PLAN_SECTIONS) {
+    assert.ok(xml.includes(section.title));
+    for (const cell of data.people[0].details!.sections[section.key][0].cells) assert.ok(xml.includes(cell), cell);
+  }
+  assert.equal((xml.match(/<w:tbl>/g) ?? []).length, 11, "six detailed sections plus diagnostics and four existing tables");
+  for (const forbidden of ["PRIVATE_B_PLAN_SOURCE", "PRIVATE_B_PLAN_DETAILS", "PRIVATE_B_DIAGNOSTIC"]) assert.equal(xml.includes(forbidden), false, forbidden);
 });

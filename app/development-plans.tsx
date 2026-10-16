@@ -3,12 +3,15 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent } from 'react';
 import { ArrowUpRight, BookOpen, CalendarDays, Check, CheckCircle2, ChevronDown, Download, FileText, Plus, Target, Users, X } from 'lucide-react';
 import './development-plans.css';
+import PlanDetailsEditor from './plan-details-editor';
+import { emptyPlanDetails, type PlanDetails } from '../lib/development-plan';
 
 type Row = Record<string, any>;
 type ExportFormat = 'xlsx' | 'docx';
 export type DevelopmentPlansProps = {
   data: Row;
   busy: boolean;
+  saveError?: string;
   initialPersonId?: string;
   onSave: (payload: Row) => Promise<boolean | undefined>;
   onEvent: (event: Row) => void;
@@ -56,14 +59,14 @@ export function DevelopmentPlans(props: DevelopmentPlansProps) {
       <div><h2>{admin ? 'Планы команды' : 'Личный маршрут развития'}</h2><p>Цели, действия и результаты в одном месте.</p></div>
       {admin && <span className="ipr-count"><Users size={17}/>{people.length} участников</span>}
     </div>
-    {admin && <p className="ipr-admin-note">Должность можно указать в карточке участника в кабинете L&D.</p>}
+    {admin && <p className="ipr-admin-note">Для каждого участника доступна единая форма ИПР: цели, практика, контрольные точки и основания оценки.</p>}
     <div className="ipr-person-grid">
       {people.map(person => {
         const personal = personalData(data, person.id);
         const plan = rows(data.developmentPlans).find(item => item.personId === person.id);
         return <button key={person.id} type="button" className="panel ipr-person-card" onClick={() => setSelectedId(person.id)} aria-label={`Открыть ИПР: ${person.name}`}>
           <PersonHeading person={person}/>
-          <span className="ipr-card-goal">{plan?.goal || 'Цель развития пока не согласована'}</span>
+          <span className="ipr-card-goal">{plan?.goal || plan?.details?.sections?.priorities?.[0]?.cells?.[0] || 'Цель развития пока не согласована'}</span>
           <span className="ipr-card-counts"><span><CalendarDays size={15}/>{personal.events.length} мероприятий</span><span><CheckCircle2 size={15}/>{personal.tasks.filter(task => task.status === 'done').length} из {personal.tasks.length} задач</span></span>
           <span className="ipr-progress-label"><span>Выполнение плана</span><b>{personal.progress}%</b></span>
           <span className="progress-track"><span style={{ width: personal.progress + '%' }}/></span>
@@ -76,15 +79,17 @@ export function DevelopmentPlans(props: DevelopmentPlansProps) {
   </section>;
 }
 
-function PersonalPlanWindow({ data, person, busy, onSave, onEvent, onTask, onNewTask, onExport, onClose }: DevelopmentPlansProps & { person: Row; onClose: () => void }) {
+function PersonalPlanWindow({ data, person, busy, saveError, onSave, onEvent, onTask, onNewTask, onExport, onClose }: DevelopmentPlansProps & { person: Row; onClose: () => void }) {
   const admin = data.role === 'admin';
   const personal = personalData(data, person.id);
   const plan = rows(data.developmentPlans).find(item => item.personId === person.id);
   const [draft, setDraft] = useState({ goal: plan?.goal || '', successCriteria: plan?.successCriteria || '', support: plan?.support || '', reviewDate: plan?.reviewDate || '' });
+  const [detailDraft, setDetailDraft] = useState<PlanDetails>(() => plan?.details ? structuredClone(plan.details) : emptyPlanDetails());
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
-  const [view, setView] = useState('goals');
+  const [view, setView] = useState('development');
+  const [closeWarning, setCloseWarning] = useState(false);
   const [eventFilter, setEventFilter] = useState(personal.events.some(event => event.type === 'individual') ? 'individual' : 'all');
   const [exporting, setExporting] = useState<ExportFormat | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
@@ -99,15 +104,17 @@ function PersonalPlanWindow({ data, person, busy, onSave, onEvent, onTask, onNew
     setDraft(previous => ({ ...previous, [field]: value }));
     setDirty(true); setSaved(false); setError('');
   }
-  async function save(event: FormEvent) {
-    event.preventDefault();
+  function changeDetails(value: PlanDetails) { setDetailDraft(value); setDirty(true); setSaved(false); setError(''); }
+  function requestClose() { if (busy) return; if (dirty) setCloseWarning(true); else onClose(); }
+  async function save(event?: FormEvent) {
+    event?.preventDefault();
     if (busy || !admin) return;
     setError('');
     try {
-      const successful = await onSave({ id: plan?.id, personId: person.id, ...draft, reviewDate: draft.reviewDate || null });
+      const successful = await onSave({ id: plan?.id, personId: person.id, ...draft, reviewDate: draft.reviewDate || null, details: detailDraft });
       if (successful) { setDirty(false); setSaved(true); }
-      else setError('Цель не сохранена. Проверьте сообщение об ошибке и повторите попытку.');
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Не удалось сохранить цель. Повторите попытку.'); }
+      else setError('ИПР не сохранён. Проверьте сообщение об ошибке и повторите попытку.');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Не удалось сохранить ИПР. Повторите попытку.'); }
   }
   async function exportPlan(format: ExportFormat) {
     setExporting(format); setError('');
@@ -121,8 +128,9 @@ function PersonalPlanWindow({ data, person, busy, onSave, onEvent, onTask, onNew
   });
   const skills = rows(data.skills);
 
-  return <dialog ref={dialog} className="modal wide ipr-dialog" aria-labelledby={titleId} onCancel={event => { event.preventDefault(); onClose(); }} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>
-    <div className="modal-heading ipr-modal-heading"><div><p>Индивидуальный план развития</p><h2 id={titleId}>{person.name}</h2><span>{person.title || 'Должность не указана'}</span></div><button type="button" className="icon-button" aria-label="Закрыть ИПР" onClick={onClose}><X size={21}/></button></div>
+  return <dialog ref={dialog} className="modal wide ipr-dialog" aria-labelledby={titleId} onCancel={event => { event.preventDefault(); requestClose(); }} onClick={event => { if (event.target === event.currentTarget) requestClose(); }}>
+    <div className="modal-heading ipr-modal-heading"><div><p>Индивидуальный план развития</p><h2 id={titleId}>{person.name}</h2><span>{person.title || 'Должность не указана'}</span></div><button type="button" className="icon-button" aria-label="Закрыть ИПР" disabled={busy} onClick={requestClose}><X size={21}/></button></div>
+    {closeWarning && <div className="ipr-close-warning" role="alert"><p>В ИПР есть несохранённые изменения.</p><div><button type="button" className="button primary" onClick={() => setCloseWarning(false)}>Продолжить заполнение</button><button type="button" className="button secondary" onClick={onClose}>Закрыть без сохранения</button></div></div>}
     <div className="ipr-window-body">
       <div className="ipr-summary">
         <div><span>Мероприятия</span><strong>{personal.confirmedIds.size}<small> / {personal.events.length}</small></strong><p>подтверждено</p></div>
@@ -131,11 +139,12 @@ function PersonalPlanWindow({ data, person, busy, onSave, onEvent, onTask, onNew
         <div><span>Выполнение плана</span><strong>{personal.progress}%</strong><div className="progress-track"><span style={{ width: personal.progress + '%' }}/></div></div>
       </div>
       <div className="ipr-export-bar"><span><FileText size={16}/> Личный ИПР для обсуждения и работы</span><div><button type="button" className="button secondary" disabled={!!exporting || busy} onClick={() => exportPlan('xlsx')}><Download size={16}/>{exporting === 'xlsx' ? 'Готовим Excel…' : 'Excel'}</button><button type="button" className="button secondary" disabled={!!exporting || busy} onClick={() => exportPlan('docx')}><Download size={16}/>{exporting === 'docx' ? 'Готовим Word…' : 'Word'}</button></div></div>
-      {dirty && <p className="ipr-unsaved-note">Изменения цели ещё не сохранены. В выгрузку попадёт сохранённая версия.</p>}
+      {dirty && <p className="ipr-unsaved-note">Изменения ИПР ещё не сохранены. В выгрузку попадёт сохранённая версия.</p>}
       <nav className="ipr-tabs" aria-label="Разделы ИПР">{[
-        ['goals', 'Цель и поддержка'], ['actions', `План действий (${personal.events.length})`], ['tasks', `Практика (${personal.tasks.length})`], ['skills', 'Карта навыков'],
+        ['development', 'Подробный ИПР'], ['goals', 'Цель и поддержка'], ['actions', `План действий (${personal.events.length})`], ['tasks', `Практика (${personal.tasks.length})`], ['skills', 'Карта навыков'],
       ].map(([id, label]) => <button type="button" key={id} className={view === id ? 'is-active' : ''} aria-current={view === id ? 'page' : undefined} onClick={() => setView(id)}>{label}</button>)}</nav>
-      {error && <p className="notice error" role="alert">{error}</p>}
+      {error && <p className="notice error" role="alert">{saveError || error}</p>}
+      {view === 'development' && <PlanDetailsEditor value={detailDraft} editable={admin} busy={busy} dirty={dirty} saved={saved} onChange={changeDetails} onSave={() => void save()}/>}
 
       {view === 'goals' && <section className="ipr-content-section">
         <div className="section-heading"><div><h3>К чему идём</h3><p>{admin ? 'Зафиксируйте договорённости о развитии и способ проверки результата.' : 'Договорённости о развитии с L&D.'}</p></div><Target size={21}/></div>

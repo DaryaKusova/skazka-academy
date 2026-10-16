@@ -1,4 +1,5 @@
 import type { Workspace, LearningEvent, Task } from "../../lib/model";
+import { PLAN_SECTIONS, emptyPlanDetails } from "../../lib/development-plan.ts";
 
 /** Deliberately anonymous records. Never copy production workspace data into tests. */
 export function exportFixture(): Workspace {
@@ -20,4 +21,27 @@ export function exportFixture(): Workspace {
     settings: { eventPoints: 20, taskPoints: 30, skillPointWeight: 50, finishPoints: 1000 },
     audit: [{ id: "PRIVATE_AUDIT_ID", at: "2026-10-30T12:00:00Z", actorId: "PRIVATE_ADMIN_ID", actorName: "PRIVATE_AUDIT_NAME", action: "PRIVATE_AUDIT_ACTION", entityId: "p1" }], race: [],
   };
+}
+
+export function detailedExportFixture(): Workspace {
+  const workspace = exportFixture();
+  const details = emptyPlanDetails();
+  details.periodStart = "2026-11-01";
+  details.periodEnd = "2027-04-30";
+  details.sourceNote = "Анонимный учебный пример ИПР\nДополнительное основание";
+  details.selfAssessmentSource = "Учебная анкета самооценки";
+  details.externalAssessmentSource = "Учебная внешняя оценка";
+  for (const section of PLAN_SECTIONS) details.sections[section.key] = [{ id: `row-${section.key}`, cells: [section.title, `Пример ${section.key} второй столбец`, `Пример ${section.key} третий столбец`, `Пример ${section.key} четвертый столбец`, `Пример ${section.key} пятый столбец`] }];
+  details.sections.priorities.push({ id: "row-literal", cells: ["=SUM(1,2)", "+Текст", "-Текст", "@Текст", "Полное многострочное содержание\n" + "Подробное описание действия. ".repeat(45) + "Конец подробного описания"] });
+  details.diagnostics = [
+    { id: "diag1", competency: "Обратная связь", selfScore: 7, externalScore: null, employeeComment: "Учебный комментарий к самооценке", planResponse: "Отработать практику обратной связи" },
+    { id: "diag2", competency: "Планирование", selfScore: 0, externalScore: 9, employeeComment: "Исходное значение ноль", planResponse: "Сохранить подтвержденную внешнюю оценку" },
+  ];
+  workspace.developmentPlans[0].details = details;
+  const otherDetails = emptyPlanDetails();
+  otherDetails.sourceNote = "PRIVATE_B_PLAN_SOURCE";
+  otherDetails.sections.priorities = [{ id: "other-row", cells: ["PRIVATE_B_PLAN_DETAILS", "", "", "", ""] }];
+  otherDetails.diagnostics = [{ id: "other-diag", competency: "PRIVATE_B_DIAGNOSTIC", selfScore: 8, externalScore: 6, employeeComment: "", planResponse: "" }];
+  workspace.developmentPlans[1].details = otherDetails;
+  return workspace;
 }

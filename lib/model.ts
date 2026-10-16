@@ -1,4 +1,6 @@
 /** Shared contract. Private source data is imported at runtime only. */
+import { PLAN_SECTIONS, hasPlanDetailsContent } from "./development-plan.ts";
+import type { PlanDetails, PlanDiagnostic, PlanRow, PlanSectionKey } from "./development-plan";
 export type Role = "admin" | "manager" | "pending";
 export type User = { id: string; email: string; name: string };
 export type Person = { id: string; name: string; email: string | null; userId: string | null; title: string; color: string; active: boolean };
@@ -15,7 +17,8 @@ export type Task = {
   dueDate: string | null; status: "todo" | "submitted" | "done"; evidence: string; completedAt: string | null;
   rating: number | null; ratingComment: string; ratedAt: string | null; ratedBy: string | null;
 };
-export type DevelopmentPlan = { id: string; personId: string; goal: string; successCriteria: string; support: string; reviewDate: string | null };
+export type DevelopmentPlan = { id: string; personId: string; goal: string; successCriteria: string; support: string; reviewDate: string | null; details?: PlanDetails };
+export type PlanImportReceipt = { importId: string; payloadHash: string; appliedAt: string };
 export type PeerReview = { id: string; eventId: string; personId: string; reviewerPersonId: string; score: number; comment: string; updatedAt: string };
 export type PeerReviewView = PeerReview & { personName: string; reviewerName: string; eventTitle: string };
 export type EventRosterEntry = { eventId: string; personId: string; name: string; title: string };
@@ -30,9 +33,9 @@ export type RaceEntry = { name: string; title: string; color: string; points: nu
 export type WorkspaceState = {
   ownerId: string | null; people: Person[]; events: LearningEvent[]; tasks: Task[]; skills: Skill[];
   assessments: Assessment[]; attendance: Attendance[]; settings: Settings; audit: AuditEntry[];
-  developmentPlans: DevelopmentPlan[]; peerReviews: PeerReview[];
+  developmentPlans: DevelopmentPlan[]; peerReviews: PeerReview[]; planImportReceipts: PlanImportReceipt[];
 };
-export type Workspace = Omit<WorkspaceState, "ownerId" | "peerReviews"> & { user: User; role: Role; revision: number; race: RaceEntry[]; eventRoster: EventRosterEntry[]; peerReviews: PeerReviewView[] };
+export type Workspace = Omit<WorkspaceState, "ownerId" | "peerReviews" | "planImportReceipts"> & { user: User; role: Role; revision: number; race: RaceEntry[]; eventRoster: EventRosterEntry[]; peerReviews: PeerReviewView[] };
 export type Action = "saveEvent" | "archiveEvent" | "savePerson" | "unlinkAccount" | "saveTask" | "completeTask" | "setAttendance" | "saveAssessment" | "saveSettings" | "saveDevelopmentPlan" | "savePeerReview";
 export const DEFAULT_SETTINGS: Settings = { eventPoints: 20, taskPoints: 30, skillPointWeight: 50, finishPoints: 1000 };
 export const PERSON_COLORS = ["#008d95", "#9a70c4", "#e3a22f", "#3b89bf", "#e48679", "#70a671", "#bd73a5", "#577d9b", "#a28c61", "#4d9f8e", "#9e7eae"];
@@ -42,7 +45,7 @@ export class DomainError extends Error {
   constructor(message: string, status = 400) { super(message); this.name = "DomainError"; this.status = status; }
 }
 export function emptyState(): WorkspaceState {
-  return { ownerId: null, people: [], events: [], tasks: [], skills: [], assessments: [], attendance: [], settings: { ...DEFAULT_SETTINGS }, audit: [], developmentPlans: [], peerReviews: [] };
+  return { ownerId: null, people: [], events: [], tasks: [], skills: [], assessments: [], attendance: [], settings: { ...DEFAULT_SETTINGS }, audit: [], developmentPlans: [], peerReviews: [], planImportReceipts: [] };
 }
 /** Additive, read-time compatibility: existing facts, scores and account links remain intact. */
 export function normalizeState(raw: unknown): WorkspaceState {
@@ -51,7 +54,7 @@ export function normalizeState(raw: unknown): WorkspaceState {
     ...emptyState(), ...state,
     settings: { ...DEFAULT_SETTINGS, ...state.settings },
     tasks: (state.tasks ?? []).map((task) => ({ ...task, rating: task.rating ?? null, ratingComment: task.ratingComment ?? "", ratedAt: task.ratedAt ?? null, ratedBy: task.ratedBy ?? null })),
-    developmentPlans: state.developmentPlans ?? [], peerReviews: state.peerReviews ?? [],
+    developmentPlans: state.developmentPlans ?? [], peerReviews: state.peerReviews ?? [], planImportReceipts: state.planImportReceipts ?? [],
   };
 }
 export function object(value: unknown): Record<string, unknown> {
@@ -136,8 +139,8 @@ export function calculateRace(state: WorkspaceState): RaceEntry[] {
 }
 export function scopeWorkspace(state: WorkspaceState, revision: number, user: User): Workspace {
   const role = resolveRole(state, user);
-  const { ownerId: _ownerId, ...data } = state;
-  void _ownerId;
+  const { ownerId: _ownerId, planImportReceipts: _planImportReceipts, ...data } = state;
+  void _ownerId; void _planImportReceipts;
   if (role === "pending") return { user, role, revision, people: [], events: [], tasks: [], skills: [], assessments: [], attendance: [], audit: [], settings: { ...DEFAULT_SETTINGS }, race: [], developmentPlans: [], peerReviews: [], eventRoster: [] };
   const race = calculateRace(state);
   const ownIds = new Set(state.people.filter((person) => person.active && person.userId === user.id).map((person) => person.id));
@@ -173,7 +176,7 @@ export function scopeWorkspace(state: WorkspaceState, revision: number, user: Us
     tasks: state.tasks.filter((task) => ownIds.has(task.personId)).map(({ id, personId, eventId, title, description, dueDate, status, evidence, completedAt, rating, ratingComment, ratedAt }) => ({ id, personId, eventId, title, description, dueDate, status, evidence, completedAt, rating, ratingComment, ratedAt, ratedBy: null })),
     assessments: state.assessments.filter((entry) => ownIds.has(entry.personId)).map(({ id, personId, skillId, baseline, current, target, evidence, date }) => ({ id, personId, skillId, baseline, current, target, evidence, date })),
     attendance: state.attendance.filter((entry) => ownIds.has(entry.personId)).map(({ id, eventId, personId, status, note }) => ({ id, eventId, personId, status, note })),
-    developmentPlans: state.developmentPlans.filter((plan) => ownIds.has(plan.personId)).map(({ id, personId, goal, successCriteria, support, reviewDate }) => ({ id, personId, goal, successCriteria, support, reviewDate })),
+    developmentPlans: state.developmentPlans.filter((plan) => ownIds.has(plan.personId)).map(({ id, personId, goal, successCriteria, support, reviewDate, details }) => ({ id, personId, goal, successCriteria, support, reviewDate, ...(details === undefined ? {} : { details: parsePlanDetails(details) }) })),
     peerReviews,
   };
 }
@@ -219,6 +222,43 @@ function parseTask(raw: unknown, state: WorkspaceState, existing?: Task): Task {
   if (eventId && !eventExists(state, eventId).participantIds.includes(personId)) throw new DomainError("Задачу можно связать только с мероприятием участника.");
   const sameAssignee = existing?.personId === personId;
   return { id: makeId(value.id), personId, eventId, title: required(value.title, "задача", 600), description: text(value.description, "описание"), dueDate: date(value.dueDate), status: existing?.status ?? "todo", evidence: sameAssignee ? existing.evidence : "", completedAt: existing?.completedAt ?? null, rating: sameAssignee ? existing.rating ?? null : null, ratingComment: sameAssignee ? existing.ratingComment ?? "" : "", ratedAt: sameAssignee ? existing.ratedAt ?? null : null, ratedBy: sameAssignee ? existing.ratedBy ?? null : null };
+}
+export function parsePlanDetails(raw: unknown): PlanDetails {
+  const value = object(raw);
+  if (value.version !== 1) throw new DomainError("Неподдерживаемая версия подробного ИПР.");
+  const source = object(value.sections), sections = {} as Record<PlanSectionKey, PlanRow[]>;
+  for (const { key } of PLAN_SECTIONS) {
+    const rows = list(source[key] ?? [], "строки раздела ИПР", 100).map(rawRow => {
+      const row = object(rawRow), cells = list(row.cells, "колонки строки ИПР", 5);
+      if (cells.length !== 5 || cells.some(cell => typeof cell !== "string")) throw new DomainError("Строка ИПР должна содержать ровно пять текстовых колонок.");
+      return { id: identifier(row.id, "строка ИПР"), cells: cells.map(cell => text(cell, "текст ИПР", 10000)) };
+    });
+    if (new Set(rows.map(row => row.id)).size !== rows.length) throw new DomainError("В разделе ИПР повторяются идентификаторы строк.");
+    sections[key] = rows;
+  }
+  const diagnosticScore = (score: unknown) => score === undefined || score === null || score === "" ? null : numeric(score, "диагностика 0–10", 0, 10);
+  const diagnostics = list(value.diagnostics ?? [], "диагностика ИПР", 100).map((rawDiagnostic): PlanDiagnostic => {
+    const entry = object(rawDiagnostic);
+    return { id: identifier(entry.id, "строка диагностики"), competency: required(entry.competency, "компетенция диагностики", 600), selfScore: diagnosticScore(entry.selfScore), externalScore: diagnosticScore(entry.externalScore), employeeComment: text(entry.employeeComment, "комментарий сотрудника"), planResponse: text(entry.planResponse, "учёт в ИПР") };
+  });
+  if (new Set(diagnostics.map(row => row.id)).size !== diagnostics.length) throw new DomainError("В диагностике ИПР повторяются идентификаторы строк.");
+  const details: PlanDetails = { version: 1, periodStart: date(value.periodStart), periodEnd: date(value.periodEnd), sourceNote: text(value.sourceNote, "источник ИПР"), selfAssessmentSource: text(value.selfAssessmentSource, "источник самооценки"), externalAssessmentSource: text(value.externalAssessmentSource, "источник внешней оценки"), sections, diagnostics };
+  if (details.periodStart && details.periodEnd && details.periodStart > details.periodEnd) throw new DomainError("Конец периода ИПР не может быть раньше начала.");
+  if (new TextEncoder().encode(JSON.stringify(details)).byteLength > 96 * 1024) throw new DomainError("Подробный ИПР слишком велик (до 96 КБ).", 413);
+  return details;
+}
+export function parseDevelopmentPlan(raw: unknown, personId: string, existing?: DevelopmentPlan): DevelopmentPlan {
+  const value = object(raw);
+  const details = value.details === undefined ? existing?.details : parsePlanDetails(value.details);
+  const goal = text(value.goal, "цель развития", 10000, existing?.goal);
+  if (!goal && (!details || !hasPlanDetailsContent(details))) throw new DomainError("Заполните цель развития или содержательные разделы ИПР.");
+  return {
+    id: `plan-${personId}`, personId, goal,
+    successCriteria: text(value.successCriteria, "критерии успеха", 10000, existing?.successCriteria),
+    support: text(value.support, "необходимая поддержка", 10000, existing?.support),
+    reviewDate: value.reviewDate === undefined ? existing?.reviewDate ?? null : date(value.reviewDate),
+    ...(details === undefined ? {} : { details }),
+  };
 }
 function validateUniqueMembership(people: Person[]): void {
   const emails = people.map((person) => person.email).filter(Boolean);
@@ -275,7 +315,7 @@ export function applyAction(state: WorkspaceState, user: User, action: string, r
     case "saveDevelopmentPlan": {
       const personId = identifier(value.personId, "участник"); personExists(state, personId);
       entityId = `plan-${personId}`;
-      const plan: DevelopmentPlan = { id: entityId, personId, goal: required(value.goal, "цель развития", 10000), successCriteria: text(value.successCriteria, "критерии успеха"), support: text(value.support, "необходимая поддержка"), reviewDate: date(value.reviewDate) };
+      const plan = parseDevelopmentPlan(value, personId, state.developmentPlans.find(item => item.personId === personId));
       next.developmentPlans = upsert(state.developmentPlans, plan); break;
     }
     case "savePeerReview": {
@@ -393,7 +433,7 @@ export function restoreBootstrapState(raw: unknown): WorkspaceState {
   }), "оценки");
   state.developmentPlans = unique(list(value.developmentPlans ?? [], "ИПР", 500).map((rawEntry) => {
     const entry = object(rawEntry), personId = identifier(entry.personId, "участник"); personExists(state, personId);
-    return { id: `plan-${personId}`, personId, goal: required(entry.goal, "цель развития", 10000), successCriteria: text(entry.successCriteria, "критерии успеха"), support: text(entry.support, "поддержка"), reviewDate: date(entry.reviewDate) };
+    return parseDevelopmentPlan(entry, personId);
   }), "ИПР");
   state.peerReviews = unique(list(value.peerReviews ?? [], "оценки коллег", 20000).map((rawEntry) => {
     const entry = object(rawEntry), eventId = identifier(entry.eventId, "мероприятие"), personId = identifier(entry.personId, "участник"), reviewerPersonId = identifier(entry.reviewerPersonId, "автор отзыва");
@@ -407,6 +447,12 @@ export function restoreBootstrapState(raw: unknown): WorkspaceState {
     const entry = object(rawEntry);
     return { id: identifier(entry.id), at: timestamp(entry.at, "дата изменения"), actorId: required(entry.actorId, "автор", 300), actorName: required(entry.actorName, "имя автора", 600), action: required(entry.action, "действие", 100), entityId: text(entry.entityId, "объект изменения", 400) };
   }), "история");
+  state.planImportReceipts = list(value.planImportReceipts ?? [], "подтверждения импорта ИПР", 100).map(rawReceipt => {
+    const receipt = object(rawReceipt), payloadHash = required(receipt.payloadHash, "отпечаток импорта", 64);
+    if (!/^[a-f0-9]{64}$/.test(payloadHash)) throw new DomainError("Некорректный отпечаток импорта ИПР.");
+    return { importId: identifier(receipt.importId, "код импорта"), payloadHash, appliedAt: timestamp(receipt.appliedAt, "дата импорта") };
+  });
+  if (new Set(state.planImportReceipts.map(receipt => receipt.importId)).size !== state.planImportReceipts.length) throw new DomainError("Повторяющиеся подтверждения импорта ИПР.");
   return state;
 }
 /** Email claims a membership once; subsequent access follows the stable site user id. */

@@ -1,8 +1,10 @@
 import type { Workspace } from "./model";
+import { PLAN_SECTIONS } from "./development-plan.ts";
+import type { PlanDetails, PlanSectionKey } from "./development-plan";
 
 export type ExportOptions = { format: "xlsx" | "docx"; personId?: string; eventIds?: string[] };
 export type ExportSelection = Omit<ExportOptions, "format">;
-type PersonRow = { id: string; name: string; title: string; active: boolean; goal: string; successCriteria: string; support: string; reviewDate: string | null };
+type PersonRow = { id: string; name: string; title: string; active: boolean; goal: string; successCriteria: string; support: string; reviewDate: string | null; details?: PlanDetails };
 type EventRow = { id: string; date: string | null; week: string; title: string; type: string; skill: string; description: string; format: string; expectedResult: string; participants: string; stage: string; owner: string; status: string };
 type TaskRow = { personId: string; name: string; title: string; event: string; description: string; dueDate: string | null; status: string; evidence: string; completedAt: string | null; rating: number | null; ratingComment: string; ratedAt: string | null };
 type SkillRow = { personId: string; name: string; skill: string; baseline: number | null; current: number | null; target: number | null; evidence: string; date: string | null };
@@ -13,6 +15,16 @@ export type ExportData = { generatedAt: string; scope: string; people: PersonRow
 const eventTypes = { group: "Групповое", individual: "Индивидуальное", team: "Командное" };
 const taskStatuses = { todo: "В работе", submitted: "На проверке L&D", done: "Выполнена" };
 const attendanceStatuses = { pending: "Не отмечено", confirmed: "Подтверждено", absent: "Не присутствовал" };
+
+function projectPlanDetails(details: PlanDetails | undefined): PlanDetails | undefined {
+  if (!details) return undefined;
+  return {
+    version: 1, periodStart: details.periodStart, periodEnd: details.periodEnd,
+    sourceNote: details.sourceNote, selfAssessmentSource: details.selfAssessmentSource, externalAssessmentSource: details.externalAssessmentSource,
+    sections: Object.fromEntries(PLAN_SECTIONS.map(({ key }) => [key, (details.sections[key] ?? []).map((row) => ({ id: row.id, cells: Array.from({ length: 5 }, (_, i) => row.cells[i] ?? "") }))])) as PlanDetails["sections"],
+    diagnostics: details.diagnostics.map((entry) => ({ id: entry.id, competency: entry.competency, selfScore: entry.selfScore ?? null, externalScore: entry.externalScore ?? null, employeeComment: entry.employeeComment, planResponse: entry.planResponse })),
+  };
+}
 
 /** Explicit projection keeps future storage fields and access credentials out of documents. */
 export function prepareExportData(workspace: Workspace, selection: ExportSelection = {}, generatedAt = new Date().toISOString()): ExportData {
@@ -34,7 +46,7 @@ export function prepareExportData(workspace: Workspace, selection: ExportSelecti
   const eventName = (id: string | null) => selectedEvents.find((event) => event.id === id)?.title ?? (id ? "Мероприятие вне выбранного плана" : "Самостоятельная практика");
   const people = selectedPeople.map((person): PersonRow => {
     const plan = (workspace.developmentPlans ?? []).find((item) => item.personId === person.id);
-    return { id: person.id, name: person.name, title: person.title, active: person.active, goal: plan?.goal ?? "", successCriteria: plan?.successCriteria ?? "", support: plan?.support ?? "", reviewDate: plan?.reviewDate ?? null };
+    return { id: person.id, name: person.name, title: person.title, active: person.active, goal: plan?.goal ?? "", successCriteria: plan?.successCriteria ?? "", support: plan?.support ?? "", reviewDate: plan?.reviewDate ?? null, details: projectPlanDetails(plan?.details) };
   });
   return {
     generatedAt, scope: selection.personId ? `Личный ИПР — ${nameOf(selection.personId)}` : requestedIds ? "Выбранные мероприятия" : workspace.role === "manager" ? "Личный план развития" : "Программа развития руководителей",
@@ -75,16 +87,37 @@ function snapshotLabel(value: string): string {
 }
 
 type Cell = string | number | Date | null;
-type SheetData = { name: string; columns: [string, number][]; rows: Cell[][] };
+type SheetData = { name: string; title?: string; columns: [string, number][]; rows: Cell[][] };
+const planSheetNames: Record<PlanSectionKey, string> = {
+  priorities: "ИПР Приоритеты", individualTopics: "ИПР Индивидуальные темы", sharedRoute: "ИПР Общий маршрут",
+  requests: "ИПР Запросы", checkpoints: "ИПР Контрольные точки", selfContext: "ИПР Контекст",
+};
+const planColumnProportions: Record<PlanSectionKey, number[]> = {
+  priorities: [18, 20, 23, 21, 18], individualTopics: [18, 22, 24, 20, 16], sharedRoute: [18, 26, 23, 21, 12],
+  requests: [24, 23, 25, 18, 10], checkpoints: [13, 25, 23, 23, 16], selfContext: [16, 24, 24, 26, 10],
+};
+function detailedPlanSheets(data: ExportData): SheetData[] {
+  const people = data.people.filter((person) => person.details !== undefined);
+  if (!people.length) return [];
+  return [
+    { name: "ИПР Диагностика", title: "Диагностика компетенций ИПР — шкала 0–10", columns: [["ФИО", 32], ["Должность", 36], ["Компетенция", 38], ["Самооценка 0–10", 21], ["Внешняя оценка 0–10", 24], ["Комментарий сотрудника", 55], ["Ответ в плане развития", 55]], rows: people.flatMap((person) => person.details!.diagnostics.length ? person.details!.diagnostics.map((entry) => [person.name, person.title, entry.competency, entry.selfScore, entry.externalScore, entry.employeeComment, entry.planResponse]) : [[person.name, person.title, "", null, null, "", ""]]) },
+    ...PLAN_SECTIONS.map(({ key, title, columns }): SheetData => ({
+      name: planSheetNames[key], title,
+      columns: [["ФИО", 32], ["Должность", 36], ...columns.map((label): [string, number] => [label, 42])],
+      rows: people.flatMap((person) => person.details!.sections[key].length ? person.details!.sections[key].map((row) => [person.name, person.title, ...row.cells]) : [[person.name, person.title, "", "", "", "", ""]]),
+    })),
+  ];
+}
 export function exportSheets(data: ExportData): SheetData[] {
   return [
     { name: "Участники", columns: [["ФИО", 32], ["Должность", 38], ["Участие", 24]], rows: data.people.map((p) => [p.name, p.title, p.active ? "Активен" : "Приостановлено"]) },
     { name: "Мероприятия", columns: [["Дата", 15], ["Неделя", 12], ["Мероприятие", 42], ["Тип", 22], ["Участники и должности", 55], ["Навык", 30], ["Описание", 50], ["Формат", 30], ["Ожидаемый результат", 50], ["Этап", 24], ["Ответственный", 28], ["Статус", 20]], rows: data.events.map((e) => [calendarDate(e.date), e.week, e.title, e.type, e.participants, e.skill, e.description, e.format, e.expectedResult, e.stage, e.owner, e.status]) },
-    { name: "ИПР", columns: [["ФИО", 32], ["Должность", 36], ["Цель развития", 55], ["Критерии успеха", 55], ["Поддержка и ресурсы", 45], ["Пересмотр ИПР", 18]], rows: data.people.map((p) => [p.name, p.title, p.goal, p.successCriteria, p.support, calendarDate(p.reviewDate)]) },
+    { name: "ИПР", columns: [["ФИО", 32], ["Должность", 36], ["Цель развития", 55], ["Критерии успеха", 55], ["Поддержка и ресурсы", 45], ["Пересмотр ИПР", 18], ["Начало периода", 18], ["Конец периода", 18], ["Основание ИПР", 55], ["Источник самооценки", 50], ["Источник внешней оценки", 50]], rows: data.people.map((p) => [p.name, p.title, p.goal, p.successCriteria, p.support, calendarDate(p.reviewDate), calendarDate(p.details?.periodStart ?? null), calendarDate(p.details?.periodEnd ?? null), p.details?.sourceNote ?? "", p.details?.selfAssessmentSource ?? "", p.details?.externalAssessmentSource ?? ""]) },
     { name: "Практические задачи", columns: [["ФИО", 32], ["Задача", 45], ["Мероприятие", 40], ["Описание", 50], ["Срок", 15], ["Статус", 24], ["Результат и подтверждение", 50], ["Дата выполнения", 18], ["Оценка L&D 1–5", 19], ["Комментарий L&D", 50], ["Дата оценки", 18]], rows: data.tasks.map((t) => [t.name, t.title, t.event, t.description, calendarDate(t.dueDate), t.status, t.evidence, calendarDate(t.completedAt), t.rating, t.ratingComment, calendarDate(t.ratedAt)]) },
     { name: "Навыки", columns: [["ФИО", 32], ["Навык", 40], ["Старт 0–5", 15], ["Сейчас 0–5", 15], ["Цель 0–5", 15], ["Основание оценки", 60], ["Дата оценки", 18]], rows: data.skills.map((s) => [s.name, s.skill, s.baseline, s.current, s.target, s.evidence, calendarDate(s.date)]) },
     { name: "Посещение", columns: [["ФИО", 32], ["Мероприятие", 45], ["Дата", 15], ["Посещение", 24], ["Комментарий", 55]], rows: data.attendance.map((a) => [a.name, a.event, calendarDate(a.date), a.status, a.note]) },
     { name: "Оценки коллег", columns: [["Кого оценивают", 32], ["Кто оценивает", 32], ["Мероприятие", 45], ["Оценка 1–5", 16], ["Комментарий", 60], ["Дата оценки", 18]], rows: data.peerReviews.map((r) => [r.recipient, r.reviewer, r.event, r.score, r.comment, calendarDate(r.updatedAt)]) },
+    ...detailedPlanSheets(data),
   ];
 }
 
@@ -100,7 +133,7 @@ export async function buildXlsx(data: ExportData): Promise<Uint8Array> {
     const sheet = workbook.addWorksheet(spec.name, { views: [{ state: "frozen", ySplit: 4 }], properties: { defaultRowHeight: 23 }, pageSetup: { orientation: "landscape", paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
     sheet.columns = spec.columns.map(([, width]) => ({ width }));
     sheet.mergeCells(1, 1, 1, spec.columns.length);
-    sheet.getCell(1, 1).value = spec.name;
+    sheet.getCell(1, 1).value = spec.title ?? spec.name;
     sheet.getCell(1, 1).font = { name: "Arial", size: 19, bold: true, color: { argb: "FF233445" } };
     sheet.getRow(1).height = 34;
     sheet.mergeCells(2, 1, 2, spec.columns.length);
@@ -110,7 +143,7 @@ export async function buildXlsx(data: ExportData): Promise<Uint8Array> {
     sheet.getRow(2).height = spec.columns.length < 4 ? 45 : 30;
     const header = sheet.getRow(4);
     header.values = spec.columns.map(([name]) => name);
-    header.height = 34;
+    header.height = Math.max(34, ...spec.columns.map(([label, width]) => Math.ceil(label.length / (width * 0.7)) * 15 + 10));
     header.eachCell((cell) => {
       cell.font = { name: "Arial", bold: true, size: 11, color: { argb: "FFFFFFFF" } };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF233445" } };
@@ -167,6 +200,20 @@ export async function buildDocx(data: ExportData): Promise<Uint8Array> {
     children.push(heading(person.name), paragraph(person.title || "Должность не указана"));
     if (!person.active) children.push(paragraph("Участие в программе приостановлено."));
     children.push(heading("Цель и результат развития", "h2"), paragraph(person.goal || "Цель развития пока не задана."), paragraph(`Критерии успеха: ${person.successCriteria || "не заданы"}.`), paragraph(`Поддержка и ресурсы: ${person.support || "не указаны"}.`), paragraph(`Дата пересмотра ИПР: ${displayDate(person.reviewDate)}.`));
+    if (person.details) {
+      const details = person.details;
+      children.push(heading("Период и основания ИПР", "h2"), paragraph(`Период развития: ${details.periodStart ? displayDate(details.periodStart) : "начало не указано"} — ${details.periodEnd ? displayDate(details.periodEnd) : "окончание не указано"}.`));
+      children.push(paragraph(`Основание ИПР: ${details.sourceNote || "не указано"}`), paragraph(`Источник самооценки: ${details.selfAssessmentSource || "не указан"}`), paragraph(`Источник внешней оценки: ${details.externalAssessmentSource || "не указан"}`));
+      children.push(heading("Диагностика компетенций ИПР", "h2"), paragraph("Самооценка и внешняя оценка приведены по шкале от 0 до 10. Оценки навыков академии используют шкалу 0–5, практических задач L&D — 1–5; эти показатели учитываются отдельно."));
+      if (details.diagnostics.length) children.push(table(["Компетенция", "Самооценка 0–10", "Внешняя оценка 0–10", "Комментарий сотрудника", "Ответ в плане развития"], details.diagnostics.map((entry) => [entry.competency, entry.selfScore, entry.externalScore, entry.employeeComment, entry.planResponse]), [21, 12, 12, 27, 28]));
+      else children.push(paragraph("Диагностические оценки пока не внесены."));
+      for (const section of PLAN_SECTIONS) {
+        children.push(heading(section.title, "h2"));
+        const rows = details.sections[section.key];
+        if (rows.length) children.push(table([...section.columns], rows.map((row) => row.cells), planColumnProportions[section.key]));
+        else children.push(paragraph("Раздел пока не заполнен."));
+      }
+    }
     const tasks = data.tasks.filter((task) => task.personId === person.id);
     children.push(heading("Практические действия", "h2"));
     if (tasks.length) {
