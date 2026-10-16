@@ -1,6 +1,6 @@
 import type { Workspace } from "./model";
 import { PLAN_SECTIONS } from "./development-plan.ts";
-import type { PlanDetails, PlanSectionKey } from "./development-plan";
+import type { PlanDetails, PlanDiagnostic, PlanSectionKey } from "./development-plan";
 
 export type ExportOptions = { format: "xlsx" | "docx"; personId?: string; eventIds?: string[] };
 export type ExportSelection = Omit<ExportOptions, "format">;
@@ -96,12 +96,21 @@ const planColumnProportions: Record<PlanSectionKey, number[]> = {
   priorities: [18, 20, 23, 21, 18], individualTopics: [18, 22, 24, 20, 16], sharedRoute: [18, 26, 23, 21, 12],
   requests: [24, 23, 25, 18, 10], checkpoints: [13, 25, 23, 23, 16], selfContext: [16, 24, 24, 26, 10],
 };
+function hasExternalAssessment(details: PlanDetails | undefined): boolean {
+  return Boolean(details && (details.externalAssessmentSource.trim() || details.diagnostics.some((entry) => entry.externalScore !== null)));
+}
+function hasSelfContext(details: PlanDetails): boolean {
+  return details.sections.selfContext.some((row) => row.cells.some((cell) => cell.trim()));
+}
 function detailedPlanSheets(data: ExportData): SheetData[] {
   const people = data.people.filter((person) => person.details !== undefined);
   if (!people.length) return [];
+  const includeExternal = people.some((person) => hasExternalAssessment(person.details));
+  const includeResponse = people.some((person) => person.details!.diagnostics.some((entry) => entry.planResponse.trim()));
+  const diagnosticCells = (entry?: PlanDiagnostic): Cell[] => [entry?.competency ?? "", entry?.selfScore ?? null, ...(includeExternal ? [entry?.externalScore ?? null] : []), entry?.employeeComment ?? "", ...(includeResponse ? [entry?.planResponse ?? ""] : [])];
   return [
-    { name: "ИПР Диагностика", title: "Диагностика компетенций ИПР — шкала 0–10", columns: [["ФИО", 32], ["Должность", 36], ["Компетенция", 38], ["Самооценка 0–10", 21], ["Внешняя оценка 0–10", 24], ["Комментарий сотрудника", 55], ["Ответ в плане развития", 55]], rows: people.flatMap((person) => person.details!.diagnostics.length ? person.details!.diagnostics.map((entry) => [person.name, person.title, entry.competency, entry.selfScore, entry.externalScore, entry.employeeComment, entry.planResponse]) : [[person.name, person.title, "", null, null, "", ""]]) },
-    ...PLAN_SECTIONS.map(({ key, title, columns }): SheetData => ({
+    { name: "ИПР Диагностика", title: "Диагностика компетенций ИПР — шкала 0–10", columns: [["ФИО", 32], ["Должность", 36], ["Компетенция", 38], ["Самооценка 0–10", 21], ...(includeExternal ? [["Внешняя оценка 0–10", 24] as [string, number]] : []), ["Комментарий сотрудника", 55], ...(includeResponse ? [["Ответ в плане развития", 55] as [string, number]] : [])], rows: people.flatMap((person) => person.details!.diagnostics.length ? person.details!.diagnostics.map((entry) => [person.name, person.title, ...diagnosticCells(entry)]) : [[person.name, person.title, ...diagnosticCells()]]) },
+    ...PLAN_SECTIONS.filter(({ key }) => key !== "selfContext" || people.some((person) => hasSelfContext(person.details!))).map(({ key, title, columns }): SheetData => ({
       name: planSheetNames[key], title,
       columns: [["ФИО", 32], ["Должность", 36], ...columns.map((label): [string, number] => [label, 42])],
       rows: people.flatMap((person) => person.details!.sections[key].length ? person.details!.sections[key].map((row) => [person.name, person.title, ...row.cells]) : [[person.name, person.title, "", "", "", "", ""]]),
@@ -109,10 +118,11 @@ function detailedPlanSheets(data: ExportData): SheetData[] {
   ];
 }
 export function exportSheets(data: ExportData): SheetData[] {
+  const includeExternal = data.people.some((person) => hasExternalAssessment(person.details));
   return [
     { name: "Участники", columns: [["ФИО", 32], ["Должность", 38], ["Участие", 24]], rows: data.people.map((p) => [p.name, p.title, p.active ? "Активен" : "Приостановлено"]) },
     { name: "Мероприятия", columns: [["Дата", 15], ["Неделя", 12], ["Мероприятие", 42], ["Тип", 22], ["Участники и должности", 55], ["Навык", 30], ["Описание", 50], ["Формат", 30], ["Ожидаемый результат", 50], ["Этап", 24], ["Ответственный", 28], ["Статус", 20]], rows: data.events.map((e) => [calendarDate(e.date), e.week, e.title, e.type, e.participants, e.skill, e.description, e.format, e.expectedResult, e.stage, e.owner, e.status]) },
-    { name: "ИПР", columns: [["ФИО", 32], ["Должность", 36], ["Цель развития", 55], ["Критерии успеха", 55], ["Поддержка и ресурсы", 45], ["Пересмотр ИПР", 18], ["Начало периода", 18], ["Конец периода", 18], ["Основание ИПР", 55], ["Источник самооценки", 50], ["Источник внешней оценки", 50]], rows: data.people.map((p) => [p.name, p.title, p.goal, p.successCriteria, p.support, calendarDate(p.reviewDate), calendarDate(p.details?.periodStart ?? null), calendarDate(p.details?.periodEnd ?? null), p.details?.sourceNote ?? "", p.details?.selfAssessmentSource ?? "", p.details?.externalAssessmentSource ?? ""]) },
+    { name: "ИПР", columns: [["ФИО", 32], ["Должность", 36], ["Цель развития", 55], ["Критерии успеха", 55], ["Поддержка и ресурсы", 45], ["Пересмотр ИПР", 18], ["Начало периода", 18], ["Конец периода", 18], ["Основание ИПР", 55], ["Источник самооценки", 50], ...(includeExternal ? [["Источник внешней оценки", 50] as [string, number]] : [])], rows: data.people.map((p) => [p.name, p.title, p.goal, p.successCriteria, p.support, calendarDate(p.reviewDate), calendarDate(p.details?.periodStart ?? null), calendarDate(p.details?.periodEnd ?? null), p.details?.sourceNote ?? "", p.details?.selfAssessmentSource ?? "", ...(includeExternal ? [p.details?.externalAssessmentSource ?? ""] : [])]) },
     { name: "Практические задачи", columns: [["ФИО", 32], ["Задача", 45], ["Мероприятие", 40], ["Описание", 50], ["Срок", 15], ["Статус", 24], ["Результат и подтверждение", 50], ["Дата выполнения", 18], ["Оценка L&D 1–5", 19], ["Комментарий L&D", 50], ["Дата оценки", 18]], rows: data.tasks.map((t) => [t.name, t.title, t.event, t.description, calendarDate(t.dueDate), t.status, t.evidence, calendarDate(t.completedAt), t.rating, t.ratingComment, calendarDate(t.ratedAt)]) },
     { name: "Навыки", columns: [["ФИО", 32], ["Навык", 40], ["Старт 0–5", 15], ["Сейчас 0–5", 15], ["Цель 0–5", 15], ["Основание оценки", 60], ["Дата оценки", 18]], rows: data.skills.map((s) => [s.name, s.skill, s.baseline, s.current, s.target, s.evidence, calendarDate(s.date)]) },
     { name: "Посещение", columns: [["ФИО", 32], ["Мероприятие", 45], ["Дата", 15], ["Посещение", 24], ["Комментарий", 55]], rows: data.attendance.map((a) => [a.name, a.event, calendarDate(a.date), a.status, a.note]) },
@@ -202,12 +212,18 @@ export async function buildDocx(data: ExportData): Promise<Uint8Array> {
     children.push(heading("Цель и результат развития", "h2"), paragraph(person.goal || "Цель развития пока не задана."), paragraph(`Критерии успеха: ${person.successCriteria || "не заданы"}.`), paragraph(`Поддержка и ресурсы: ${person.support || "не указаны"}.`), paragraph(`Дата пересмотра ИПР: ${displayDate(person.reviewDate)}.`));
     if (person.details) {
       const details = person.details;
+      const includeExternal = hasExternalAssessment(details);
+      const includeResponse = details.diagnostics.some((entry) => entry.planResponse.trim());
       children.push(heading("Период и основания ИПР", "h2"), paragraph(`Период развития: ${details.periodStart ? displayDate(details.periodStart) : "начало не указано"} — ${details.periodEnd ? displayDate(details.periodEnd) : "окончание не указано"}.`));
-      children.push(paragraph(`Основание ИПР: ${details.sourceNote || "не указано"}`), paragraph(`Источник самооценки: ${details.selfAssessmentSource || "не указан"}`), paragraph(`Источник внешней оценки: ${details.externalAssessmentSource || "не указан"}`));
-      children.push(heading("Диагностика компетенций ИПР", "h2"), paragraph("Самооценка и внешняя оценка приведены по шкале от 0 до 10. Оценки навыков академии используют шкалу 0–5, практических задач L&D — 1–5; эти показатели учитываются отдельно."));
-      if (details.diagnostics.length) children.push(table(["Компетенция", "Самооценка 0–10", "Внешняя оценка 0–10", "Комментарий сотрудника", "Ответ в плане развития"], details.diagnostics.map((entry) => [entry.competency, entry.selfScore, entry.externalScore, entry.employeeComment, entry.planResponse]), [21, 12, 12, 27, 28]));
+      children.push(paragraph(`Основание ИПР: ${details.sourceNote || "не указано"}`), paragraph(`Источник самооценки: ${details.selfAssessmentSource || "не указан"}`));
+      if (includeExternal) children.push(paragraph(`Источник внешней оценки: ${details.externalAssessmentSource || "не указан"}`));
+      children.push(heading("Диагностика компетенций ИПР", "h2"), paragraph(`${includeExternal ? "Самооценка и внешняя оценка приведены" : "Самооценка приведена"} по шкале от 0 до 10. Оценки навыков академии используют шкалу 0–5, практических задач L&D — 1–5; эти показатели учитываются отдельно.`));
+      const diagnosticWeights = [21, 12, ...(includeExternal ? [12] : []), 27, ...(includeResponse ? [28] : [])];
+      const weightTotal = diagnosticWeights.reduce((sum, weight) => sum + weight, 0);
+      if (details.diagnostics.length) children.push(table(["Компетенция", "Самооценка 0–10", ...(includeExternal ? ["Внешняя оценка 0–10"] : []), "Комментарий сотрудника", ...(includeResponse ? ["Ответ в плане развития"] : [])], details.diagnostics.map((entry) => [entry.competency, entry.selfScore, ...(includeExternal ? [entry.externalScore] : []), entry.employeeComment, ...(includeResponse ? [entry.planResponse] : [])]), diagnosticWeights.map((weight) => weight * 100 / weightTotal)));
       else children.push(paragraph("Диагностические оценки пока не внесены."));
       for (const section of PLAN_SECTIONS) {
+        if (section.key === "selfContext" && !hasSelfContext(details)) continue;
         children.push(heading(section.title, "h2"));
         const rows = details.sections[section.key];
         if (rows.length) children.push(table([...section.columns], rows.map((row) => row.cells), planColumnProportions[section.key]));

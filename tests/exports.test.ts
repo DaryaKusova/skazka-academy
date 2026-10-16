@@ -183,10 +183,11 @@ test("empty detailed IPR retains reusable section headers and blank diagnostic s
   const workspace = exportFixture();
   workspace.developmentPlans[0].details = emptyPlanDetails();
   const sheets = exportSheets(prepareExportData(workspace, { personId: "p1" }, generatedAt));
-  assert.equal(sheets.length, 14);
+  assert.equal(sheets.length, 13);
   const diagnostics = sheets.find((sheet) => sheet.name === "ИПР Диагностика")!;
-  assert.deepEqual(diagnostics.rows[0].slice(2), ["", null, null, "", ""]);
-  for (const section of PLAN_SECTIONS) assert.deepEqual(sheets.find((sheet) => sheet.title === section.title)!.rows[0].slice(2), ["", "", "", "", ""]);
+  assert.deepEqual(diagnostics.rows[0].slice(2), ["", null, ""]);
+  assert.equal(sheets.some((sheet) => sheet.name === "ИПР Контекст"), false);
+  for (const section of PLAN_SECTIONS.filter((section) => section.key !== "selfContext")) assert.deepEqual(sheets.find((sheet) => sheet.title === section.title)!.rows[0].slice(2), ["", "", "", "", ""]);
 });
 
 test("detailed XLSX stores all plan text and literal formula prefixes without altering null or zero diagnostics", async () => {
@@ -213,4 +214,46 @@ test("detailed DOCX includes complete IPR sources, diagnostics and every five-co
   }
   assert.equal((xml.match(/<w:tbl>/g) ?? []).length, 11, "six detailed sections plus diagnostics and four existing tables");
   for (const forbidden of ["PRIVATE_B_PLAN_SOURCE", "PRIVATE_B_PLAN_DETAILS", "PRIVATE_B_DIAGNOSTIC"]) assert.equal(xml.includes(forbidden), false, forbidden);
+});
+
+test("self-assessment-only export omits external evaluation, empty responses and empty context in XLSX and DOCX", async () => {
+  const workspace = detailedExportFixture();
+  const details = workspace.developmentPlans[0].details!;
+  details.externalAssessmentSource = "   ";
+  details.diagnostics = details.diagnostics.map((entry) => ({ ...entry, externalScore: null, planResponse: " " }));
+  details.sections.selfContext = [{ id: "blank-context", cells: ["", " ", "", "", ""] }];
+  const data = prepareExportData(workspace, { personId: "p1" }, generatedAt);
+  const sheets = exportSheets(data);
+  assert.equal(sheets.length, 13);
+  const diagnostics = sheets.find((sheet) => sheet.name === "ИПР Диагностика")!;
+  assert.deepEqual(diagnostics.columns.map(([label]) => label), ["ФИО", "Должность", "Компетенция", "Самооценка 0–10", "Комментарий сотрудника"]);
+  assert.equal(diagnostics.rows[1][3], 0);
+  const [xlsx, docx] = await Promise.all([buildXlsx(data), buildDocx(data)]);
+  const xlsxEntries = zipEntries(xlsx), docxEntries = zipEntries(docx);
+  const worksheetText = xlsxEntries.get("xl/sharedStrings.xml")!;
+  const wordText = docxEntries.get("word/document.xml")!;
+  for (const text of [worksheetText, wordText]) {
+    assert.equal(/CEO|внешн|Ответ в плане развития|Сильные стороны и контекст самооценки/i.test(text), false);
+    assert.ok(text.includes("Самооценка 0–10"));
+    for (const section of PLAN_SECTIONS.filter((section) => section.key !== "selfContext")) assert.ok(text.includes(section.title));
+  }
+  assert.equal((wordText.match(/<w:tbl>/g) ?? []).length, 10);
+  assert.equal(xlsxEntries.get("xl/workbook.xml")!.includes("ИПР Контекст"), false);
+});
+
+test("external diagnostic column is retained for a source alone or an actual zero score", async () => {
+  for (const mode of ["source", "zero"] as const) {
+    const workspace = detailedExportFixture();
+    const details = workspace.developmentPlans[0].details!;
+    details.externalAssessmentSource = mode === "source" ? "Учебный источник оценки" : "";
+    details.diagnostics = [{ ...details.diagnostics[0], externalScore: mode === "zero" ? 0 : null, planResponse: "" }];
+    const data = prepareExportData(workspace, { personId: "p1" }, generatedAt);
+    const diagnostics = exportSheets(data).find((sheet) => sheet.name === "ИПР Диагностика")!;
+    assert.ok(diagnostics.columns.some(([label]) => label === "Внешняя оценка 0–10"));
+    assert.equal(diagnostics.rows[0][4], mode === "zero" ? 0 : null);
+    assert.equal(diagnostics.columns.some(([label]) => label === "Ответ в плане развития"), false);
+    const xml = zipEntries(await buildDocx(data)).get("word/document.xml")!;
+    assert.ok(xml.includes("Внешняя оценка 0–10"));
+    assert.equal(xml.includes("Ответ в плане развития"), false);
+  }
 });
